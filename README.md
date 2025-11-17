@@ -1,2 +1,2 @@
 # data-layout
-Pattern of bytes to store on media for timeseries.
+Pattern of bytes to store on media for timeseries
