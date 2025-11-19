@@ -114,6 +114,17 @@ describe('BufferManipulator', () => {
                 const writer = sinon.stub().returns(15);
                 assert.throws(() => { manipulator.append(writer); });
             });
+
+            it('should write a byte via DataView and update buffer', () => {
+                // Real writer that uses DataView.setUint8
+                const writer = (view: DataView, offset: number, value: number): number => {
+                    view.setUint8(offset, value);
+                    return offset + 1;
+                };
+                manipulator.append(writer, 255);
+                const buf = manipulator.getBuffer();
+                assert.strictEqual(buf[0], 255);
+            });
         });
 
         describe('consume', () => {
