@@ -74,6 +74,19 @@ describe('BufferManipulator', () => {
                 const buffer2 = manipulator.getBuffer();
                 assert.strictEqual(buffer1, buffer2);
             });
+
+            it('should not mutate original when cloned buffer is modified', () => {
+                const original = manipulator.getBuffer(false);
+                const clone = manipulator.getBuffer(true);
+                clone[0] = 99;
+                assert.notStrictEqual(original[0], 99);
+            });
+
+            it('should produce distinct clones on successive calls', () => {
+                const clone1 = manipulator.getBuffer(true);
+                const clone2 = manipulator.getBuffer(true);
+                assert.notStrictEqual(clone1, clone2);
+            });
         });
 
         describe('append', () => {
@@ -125,6 +138,23 @@ describe('BufferManipulator', () => {
                 const buf = manipulator.getBuffer();
                 assert.strictEqual(buf[0], 255);
             });
+
+            it('should allow writer that does not advance offset', () => {
+                const writerNoAdvance = sinon.stub().callsFake((_: DataView, offset: number) => offset);
+                manipulator.append(writerNoAdvance);
+                const writer2 = sinon.stub().returns(5);
+                manipulator.append(writer2);
+                // Second writer should still see original offset (0) because first did not advance
+                assert.strictEqual(writerNoAdvance.firstCall.args[1], 0);
+                assert.strictEqual(writer2.firstCall.args[1], 0);
+            });
+
+            it('should throw with correct message on negative offset', () => {
+                const writerNeg = sinon.stub().returns(-5);
+                assert.throws(() => manipulator.append(writerNeg), {
+                    message: 'Buffer overflow: Attempted to write beyond buffer length.'
+                });
+            });
         });
 
         describe('consume', () => {
@@ -166,6 +196,40 @@ describe('BufferManipulator', () => {
                 const reader = sinon.stub().returns(20);
                 assert.throws(() => { manipulator.consume(reader); });
             });
+
+            it('should allow reader that does not advance offset', () => {
+                const readerNoAdvance = sinon.stub().callsFake((_: DataView, offset: number) => offset);
+                manipulator.consume(readerNoAdvance);
+                const reader2 = sinon.stub().returns(3);
+                manipulator.consume(reader2);
+                assert.strictEqual(readerNoAdvance.firstCall.args[1], 0);
+                assert.strictEqual(reader2.firstCall.args[1], 0);
+            });
+
+            it('should allow boundary offset equal to buffer length after operations', () => {
+                // Fill buffer to its length via writer stubs advancing offset one by one
+                const writer = (view: DataView, offset: number): number => {
+                    if (offset < 10) {
+                        view.setUint8(offset, offset);
+                    }
+                    return offset + 1;
+                };
+                for (let i = 0; i < 10; i++) {
+                    manipulator.append(writer);
+                }
+                // Reader returns same boundary length (10) - should be valid
+                const readerBoundary = sinon.stub().returns(10);
+                assert.doesNotThrow(() => manipulator.consume(readerBoundary));
+                // Read cursor starts at 0 despite writes
+                assert.strictEqual(readerBoundary.firstCall.args[1], 0);
+            });
+
+            it('should throw with correct message on negative offset from reader', () => {
+                const readerNeg = sinon.stub().returns(-2);
+                assert.throws(() => manipulator.consume(readerNeg), {
+                    message: 'Buffer overflow: Attempted to read beyond buffer length.'
+                });
+            });
         });
 
     });
@@ -182,8 +246,9 @@ describe('BufferManipulator', () => {
             const reader = sinon.stub().returns(7);
             manipulator.append(writer);
             manipulator.consume(reader);
+            // With separate cursors, write cursor advances, read cursor starts at 0
             assert.strictEqual(writer.firstCall.args[1], 0);
-            assert.strictEqual(reader.firstCall.args[1], 3);
+            assert.strictEqual(reader.firstCall.args[1], 0);
         });
 
         it('should maintain offset across operations', () => {
@@ -193,7 +258,31 @@ describe('BufferManipulator', () => {
             manipulator.append(writer1);
             manipulator.consume(reader1);
             manipulator.append(writer2);
-            assert.strictEqual(writer2.firstCall.args[1], 5);
+            // Second writer sees previous write cursor (2), not read cursor (5)
+            assert.strictEqual(writer2.firstCall.args[1], 2);
+        });
+
+        it('should report correct cursors via info()', () => {
+            const writer = sinon.stub().returns(4);
+            manipulator.append(writer);
+            const reader = sinon.stub().returns(3);
+            manipulator.consume(reader);
+            const info = (manipulator as any).info();
+            assert.deepStrictEqual(info, { size: 10, readCursor: 3, writeCursor: 4 });
+        });
+
+        it('should keep readCursor independent from writeCursor', () => {
+            const w1 = sinon.stub().returns(5);
+            manipulator.append(w1);
+            const r1 = sinon.stub().returns(2);
+            manipulator.consume(r1);
+            const r2 = sinon.stub().returns(4);
+            manipulator.consume(r2);
+            const info = (manipulator as any).info();
+            assert.strictEqual(w1.firstCall.args[1], 0);
+            assert.strictEqual(r1.firstCall.args[1], 0); // read starts at 0
+            assert.strictEqual(r2.firstCall.args[1], 2); // read advanced independently
+            assert.deepStrictEqual(info, { size: 10, readCursor: 4, writeCursor: 5 });
         });
 
         it('should allow offset at buffer length boundary', () => {
