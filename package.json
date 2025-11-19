@@ -16,6 +16,7 @@
   "main": "index.ts",
   "scripts": {
     "test": "c8 --reporter=html --reporter=text node --experimental-strip-types --test **/*.test.ts",
+    "ex": "node --experimental-strip-types --test **/*.example.ts",
     "start": "node --experimental-strip-types src/index.ts"
   },
   "dependencies": {
